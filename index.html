@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Color Capture – Unique Arcade Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        /* Basic reset */
+        *{margin:0;padding:0;box-sizing:border-box;}
+        body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;overflow:hidden;}
+        canvas{display:block;background:#222;margin:auto;}
+
+        /* Screens */
+        .screen{
+            position:absolute;top:0;left:0;width:100%;height:100%;
+            display:flex;flex-direction:column;justify-content:center;align-items:center;
+            background:rgba(0,0,0,0.85);z-index:10;
+        }
+        .screen.hidden{display:none;}
+        button{
+            padding:12px 24px;margin-top:20px;
+            font-size:1.2rem;background:#28a745;color:#fff;
+            border:none;border-radius:6px;cursor:pointer;
+        }
+        button:hover{background:#218838;}
+        #objective{
+            max-width:80%;text-align:center;font-size:1rem;margin-top:10px;
+        }
+    </style>
+</head>
+<body>
+
+<!-- ==== START SCREEN ==== -->
+<div id="startScreen" class="screen">
+    <h1>Color Capture</h1>
+    <p id="objective">
+        Capture as many moving colored circles as you can before they fade away.
+        Use the arrow keys (or swipe/tap on mobile) to move the square.
+        Each captured circle adds points – the faster you react, the higher the score!
+    </p>
+    <button id="playBtn">Play</button>
+</div>
+
+<!-- ==== GAME OVER SCREEN ==== -->
+<div id="gameOverScreen" class="screen hidden">
+    <h1>Game Over</h1>
+    <p id="finalScore">Score: 0</p>
+    <button id="retryBtn">Retry</button>
+</div>
+
+<canvas id="gameCanvas" width="800" height="600"></canvas>
+
+<script>
+/* -------------------------------------------------
+   Core Game Logic (original & unique mechanics)
+   ------------------------------------------------- */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const PLAYER_SIZE = 40;
+const CIRCLE_RADIUS = 20;
+const SPAWN_INTERVAL = 1500; // ms
+const CIRCLE_LIFETIME = 4000; // ms
+const SPEED = 4;
+
+let player = { x: canvas.width/2, y: canvas.height/2 };
+let circles = []; // {x,y,color,spawnTime}
+let score = 0;
+let gameRunning = false;
+let spawnTimer;
+
+// Utility
+function rand(min, max){ return Math.random() * (max - min) + min; }
+function randomColor(){
+    const hue = Math.floor(rand(0,360));
+    return `hsl(${hue},80%,60%)`;
+}
+
+/* ----------------- Rendering ----------------- */
+function drawPlayer(){
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(player.x-PLAYER_SIZE/2, player.y-PLAYER_SIZE/2, PLAYER_SIZE, PLAYER_SIZE);
+}
+function drawCircles(){
+    const now = Date.now();
+    circles.forEach(c=>{
+        const age = now - c.spawnTime;
+        const alpha = 1 - age / CIRCLE_LIFETIME;
+        ctx.fillStyle = c.color;
+        ctx.globalAlpha = Math.max(alpha,0);
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, CIRCLE_RADIUS, 0, Math.PI*2);
+        ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+}
+function render(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    drawPlayer();
+    drawCircles();
+    // Score display
+    ctx.fillStyle = '#fff';
+    ctx.font = '20px Arial';
+    ctx.fillText(`Score: ${score}`, 10, 30);
+}
+
+/* ----------------- Game Loop ----------------- */
+function update(){
+    if(!gameRunning) return;
+    // Collision detection
+    const now = Date.now();
+    circles = circles.filter(c=>{
+        const dx = c.x - player.x;
+        const dy = c.y - player.y;
+        const dist = Math.hypot(dx, dy);
+        if(dist < PLAYER_SIZE/2 + CIRCLE_RADIUS){
+            score++;
+            return false; // remove captured circle
+        }
+        // Remove expired circles (trigger game over if any escape)
+        if(now - c.spawnTime > CIRCLE_LIFETIME){
+            endGame();
+            return false;
+        }
+        return true;
+    });
+    render();
+    requestAnimationFrame(update);
+}
+
+/* ----------------- Circle Spawning ----------------- */
+function spawnCircle(){
+    const x = rand(CIRCLE_RADIUS, canvas.width - CIRCLE_RADIUS);
+    const y = rand(CIRCLE_RADIUS, canvas.height - CIRCLE_RADIUS);
+    circles.push({x, y, color: randomColor(), spawnTime: Date.now()});
+}
+
+/* ----------------- Controls ----------------- */
+const keys = { ArrowUp:false, ArrowDown:false, ArrowLeft:false, ArrowRight:false };
+
+function movePlayer(){
+    if(keys.ArrowUp)    player.y -= SPEED;
+    if(keys.ArrowDown)  player.y += SPEED;
+    if(keys.ArrowLeft)  player.x -= SPEED;
+    if(keys.ArrowRight) player.x += SPEED;
+
+    // Keep inside canvas
+    player.x = Math.max(PLAYER_SIZE/2, Math.min(canvas.width-PLAYER_SIZE/2, player.x));
+    player.y = Math.max(PLAYER_SIZE/2, Math.min(canvas.height-PLAYER_SIZE/2, player.y));
+}
+function handleKeyboard(e){
+    const down = e.type === 'keydown';
+    if(keys.hasOwnProperty(e.key)){
+        keys[e.key] = down;
+        e.preventDefault();
+    }
+}
+window.addEventListener('keydown', handleKeyboard);
+window.addEventListener('keyup', handleKeyboard);
+
+/* ---- Mobile Pointer Controls (kept for compatibility) ---- */
+let pointerStartX = null, pointerStartY = null;
+function onPointerDown(e){
+    const rect = canvas.getBoundingClientRect();
+    pointerStartX = e.clientX - rect.left;
+    pointerStartY = e.clientY - rect.top;
+}
+function onPointerUp(e){
+    if(pointerStartX === null) return;
+    const rect = canvas.getBoundingClientRect();
+    const endX = e.clientX - rect.left;
+    const endY = e.clientY - rect.top;
+    const dx = endX - pointerStartX;
+    const dy = endY - pointerStartY;
+    const absX = Math.abs(dx), absY = Math.abs(dy);
+    // Simple swipe detection
+    if(Math.max(absX,absY) > 30){
+        // Reset keys
+        keys.ArrowUp = keys.ArrowDown = keys.ArrowLeft = keys.ArrowRight = false;
+        if(absX > absY){
+            if(dx > 0) keys.ArrowRight = true;
+            else keys.ArrowLeft = true;
+        }else{
+            if(dy > 0) keys.ArrowDown = true;
+            else keys.ArrowUp = true;
+        }
+        // Move once then clear
+        movePlayer();
+        keys.ArrowUp = keys.ArrowDown = keys.ArrowLeft = keys.ArrowRight = false;
+    }else{
+        // Tap on canvas – move player directly to tap position
+        player.x = Math.min(Math.max(endX, PLAYER_SIZE/2), canvas.width-PLAYER_SIZE/2);
+        player.y = Math.min(Math.max(endY, PLAYER_SIZE/2), canvas.height-PLAYER_SIZE/2);
+    }
+    pointerStartX = pointerStartY = null;
+}
+canvas.addEventListener('pointerdown', onPointerDown);
+canvas.addEventListener('pointerup', onPointerUp);
+
+/* ---- Mobile Touch Controls (required) ---- */
+let touchStartX = null, touchStartY = null;
+
+function onTouchStart(e){
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches[0];
+    touchStartX = touch.clientX - rect.left;
+    touchStartY = touch.clientY - rect.top;
+}
+function onTouchEnd(e){
+    if (touchStartX === null) return;
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.changedTouches[0];
+    const endX = touch.clientX - rect.left;
+    const endY = touch.clientY - rect.top;
+    const dx = endX - touchStartX;
+    const dy = endY - touchStartY;
+    const absX = Math.abs(dx), absY = Math.abs(dy);
+
+    // Swipe detection (same logic as pointer)
+    if (Math.max(absX, absY) > 30){
+        keys.ArrowUp = keys.ArrowDown = keys.ArrowLeft = keys.ArrowRight = false;
+        if (absX > absY){
+            if (dx > 0) keys.ArrowRight = true; else keys.ArrowLeft = true;
+        } else {
+            if (dy > 0) keys.ArrowDown = true; else keys.ArrowUp = true;
+        }
+        movePlayer();
+        keys.ArrowUp = keys.ArrowDown = keys.ArrowLeft = keys.ArrowRight = false;
+    } else {
+        // Tap → move player to touched point
+        player.x = Math.min(Math.max(endX, PLAYER_SIZE/2), canvas.width - PLAYER_SIZE/2);
+        player.y = Math.min(Math.max(endY, PLAYER_SIZE/2), canvas.height - PLAYER_SIZE/2);
+    }
+    touchStartX = touchStartY = null;
+}
+
+/* Add the listeners */
+canvas.addEventListener('touchstart', onTouchStart, {passive:true});
+canvas.addEventListener('touchend',   onTouchEnd,   {passive:true});
+
+/* ----------------- Game Flow ----------------- */
+function startGame(){
+    // Reset state
+    score = 0;
+    circles = [];
+    player = { x: canvas.width/2, y: canvas.height/2 };
+    gameRunning = true;
+    document.getElementById('startScreen').classList.add('hidden');
+    document.getElementById('gameOverScreen').classList.add('hidden');
+
+    // Start spawning circles
+    spawnTimer = setInterval(spawnCircle, SPAWN_INTERVAL);
+    requestAnimationFrame(update);
+}
+function endGame(){
+    gameRunning = false;
+    clearInterval(spawnTimer);
+    document.getElementById('finalScore').textContent = `Score: ${score}`;
+    document.getElementById('gameOverScreen').classList.remove('hidden');
+}
+
+/* ----------------- UI Buttons ----------------- */
+document.getElementById('playBtn').addEventListener('click', startGame);
+document.getElementById('retryBtn').addEventListener('click', startGame);
+
+/* ---- Keep player moving while key is held (desktop) ---- */
+function gameLoop(){
+    if(gameRunning){
+        movePlayer();
+    }
+    requestAnimationFrame(gameLoop);
+}
+gameLoop(); // start the perpetual loop
+
+</script>
+</body>
+</html>
